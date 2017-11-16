@@ -1,6 +1,5 @@
 import ev3dev.ev3 as ev3
 
-
 class Config:
     def __init__(self):
         self.right_motor = ev3.LargeMotor('outC')

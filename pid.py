@@ -1,8 +1,12 @@
+#!/usr/bin/python3
 import ev3dev.ev3 as ev3
 from config import Config
+import time
 
 ROBOT = Config()
 
+def sign(x):
+    return ((x>0)-(x<0))
 
 def calibrate(robot):
     robot.right_motor.run_forever(speed_sp=50)
@@ -29,7 +33,7 @@ def calibrate(robot):
         previous_r = current_r
 
     threshold = {"left": (lowest_l + highest_l * 1.3) / 2, "right": (lowest_l + highest_l * 1.3) / 2}
-    return threshold
+    return threshold, lowest_l, highest_l, lowest_r, highest_r
 
 
 def align(ROBOT, thershold):
@@ -48,41 +52,43 @@ def align(ROBOT, thershold):
 
 
 def main():
-    threshold = calibrate(ROBOT)
-
+    threshold, lowest_l, highest_l, lowest_r, highest_r = calibrate(ROBOT)
     align(ROBOT, threshold)
-
+    lowest_err_left = threshold["left"] - highest_l
+    highest_err_left = threshold["left"] - lowest_l
+    lowest_err_right = threshold["right"] - highest_r
+    highest_err_right = threshold["right"] - lowest_r
     with open('data.csv', 'w') as file:
-        file.write("color_left, color_right, error_l, error_r, error, integral, diferential, proportional, "
-                   "motorpow_l, motorpow_r \n")
+        file.write("error_l, error_r, error, "
+                   "motorpow_l, motorpow_r, time_start, time_end \n")
         integral = 0
-        kp = 8
+        kp = 0.85
         ki = 0
-        kd = 0
-        ks = 800
+        kd = 0.3
+        power = 400
         color_left_value = ROBOT.color_left.value()
         color_right_value = ROBOT.color_right.value()
         error_l = threshold["left"] - color_left_value
         error_r = threshold["right"] - color_right_value
         prev_error = error_l - error_r
         while True:
+            time_start = time.clock()
             color_left_value = ROBOT.color_left.value()
             color_right_value = ROBOT.color_right.value()
             error_l = threshold["left"] - color_left_value
+            error_l = (error_l-lowest_err_left)/(highest_err_left-lowest_err_left)
             error_r = threshold["right"] - color_right_value
+            error_r = (error_r-lowest_err_right)/(highest_err_right-lowest_err_right)
             error = error_l - error_r
             integral = integral + error
             differential = prev_error - error
             proportional = kp * error
             integral_output = integral * ki
             differential_output = differential * kd
-            base_speed = (pow(1.3, (-abs(error))))*ks
-            motorpow_l = base_speed - (proportional + integral_output + differential_output)
-            motorpow_r = base_speed + (proportional + integral_output + differential_output)
-            file.write(
-                str(color_left_value) + ", " + str(color_right_value) + ", " + str(error_l) + ", " +
-                str(error_r) + ", " + str(error) + ", " + str(integral_output) + ", " + str(differential_output) + ", " +
-                str(proportional) + ", " + str(motorpow_l) + ", " + str(motorpow_r) + "\n")
+            output = proportional + integral_output + differential_output
+            motorpow_r = (((1+sign(error))/2) + (((1-sign(error))/2)*(output)) + (1-abs(sign(error)))/2)*power
+            motorpow_l = (((1+sign(-error))/2) + (((1-sign(-error))/2)*(output)) + (1-abs(sign(error)))/2)*power
+            print (prev_error, error, motorpow_l, motorpow_r)
             if motorpow_l < 0:
                 ROBOT.left_motor.polarity = ev3.LargeMotor.ENCODER_POLARITY_INVERSED
             else:
@@ -91,9 +97,16 @@ def main():
                 ROBOT.right_motor.polarity = ev3.LargeMotor.ENCODER_POLARITY_INVERSED
             else:
                 ROBOT.right_motor.polarity = ev3.LargeMotor.ENCODER_POLARITY_NORMAL
-            ROBOT.right_motor.run_forever(speed_sp=abs(min(motorpow_r, 1050)))
-            ROBOT.left_motor.run_forever(speed_sp=abs(min(motorpow_l, 1050)))
+            ROBOT.right_motor.run_forever(speed_sp=abs(motorpow_r))
+            ROBOT.left_motor.run_forever(speed_sp=abs(motorpow_l))
             prev_error = error
+            time_end = time.clock()
+            if time_end-time_start <= 0.0125:
+                time.sleep(0.0125 - (time_end - time_start))
+            
+            #file.write(
+            #    str(error_l) + ", " + str(error_r) + ", " + str(error) + ", "  + 
+            #    str(motorpow_l) + ", " + str(motorpow_r) +  ", " + str(time_start) + ", " + str(time_end) + ", " +  str(time_end-time_start) + "\n")
 
 try:
     main()
